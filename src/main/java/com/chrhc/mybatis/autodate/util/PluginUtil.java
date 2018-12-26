@@ -23,14 +23,20 @@
  */
 package com.chrhc.mybatis.autodate.util;
 
-import java.lang.reflect.Proxy;
-
 import org.apache.ibatis.reflection.MetaObject;
 import org.apache.ibatis.reflection.SystemMetaObject;
 
+import java.lang.reflect.Proxy;
+
+/**
+ * @author cgj
+ */
 public final class PluginUtil {
-	
-	private PluginUtil() {} // private constructor
+
+	/**
+	 * private constructor
+ 	 */
+	private PluginUtil() {}
 	
 	/**
 	 * <p>Recursive get the original target object.
