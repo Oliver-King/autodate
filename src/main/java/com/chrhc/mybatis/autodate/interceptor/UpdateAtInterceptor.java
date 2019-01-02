@@ -124,14 +124,15 @@ public class UpdateAtInterceptor implements Interceptor {
                 Update stmt = (Update) CCJSqlParserUtil.parse(sql);
                 List<Column> columns = getColumns(stmt, sqlCmdType);
 
-                if (!contains(columns, columnName)) {
-                    //不包含update_at 字段时，则修改SQL
-                    sql = addFiled4Update(stmt, columnName, date);
-                    sb.append(sql);
-                } else {
+                if (contains(columns, columnName)) {
                     //包含update_at 字段时，则修改参数值
                     modifyParam4Update(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
                     // sb.append(sql); 暂时不用
+                } else {
+                    //不包含update_at 字段时，则修改SQL
+                    sql = addFiled4Update(stmt, columnName, date);
+                    sb.append(sql);
+
                 }
             }
         }
@@ -165,14 +166,15 @@ public class UpdateAtInterceptor implements Interceptor {
                 Insert stmt = (Insert) CCJSqlParserUtil.parse(sql);
                 List<Column> columns = getColumns(stmt, sqlCmdType);
 
-                if (!contains(columns, columnName)) {
-                    //不包含update_at 字段时，则修改SQL
-                    sql = addFiled4Insert(stmt, columnName, date);
-                    sb.append(sql);
-                } else {
+                if (contains(columns, columnName)) {
                     //包含update_at 字段时，则修改参数值
                     modifyParsm4Insert(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
                     // sb.append(sql); 暂时不用
+                } else {
+                    //不包含update_at 字段时，则修改SQL
+                    sql = addFiled4Insert(stmt, columnName, date);
+                    sb.append(sql);
+
                 }
             }
         }
