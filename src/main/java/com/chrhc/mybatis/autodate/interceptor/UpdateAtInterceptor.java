@@ -2,7 +2,9 @@ package com.chrhc.mybatis.autodate.interceptor;
 
 import com.chrhc.mybatis.autodate.util.PluginUtil;
 import com.chrhc.mybatis.autodate.util.TypeUtil;
+import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.JdbcParameter;
 import net.sf.jsqlparser.expression.StringValue;
 import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
 import net.sf.jsqlparser.expression.operators.relational.ItemsList;
@@ -16,10 +18,7 @@ import org.apache.ibatis.binding.MapperMethod;
 import org.apache.ibatis.executor.statement.StatementHandler;
 import org.apache.ibatis.logging.Log;
 import org.apache.ibatis.logging.LogFactory;
-import org.apache.ibatis.mapping.BoundSql;
-import org.apache.ibatis.mapping.MappedStatement;
-import org.apache.ibatis.mapping.ParameterMapping;
-import org.apache.ibatis.mapping.SqlCommandType;
+import org.apache.ibatis.mapping.*;
 import org.apache.ibatis.plugin.*;
 import org.apache.ibatis.reflection.MetaObject;
 import org.apache.ibatis.reflection.SystemMetaObject;
@@ -41,7 +40,9 @@ public class UpdateAtInterceptor implements Interceptor {
 
     private static final Log logger = LogFactory.getLog(UpdateAtInterceptor.class);
     private static final String M = "prepare";
-    private static final String PARAM = "param";
+    private static final String SP = ".";
+    private static final String FRCH = "__frch";
+
     private Properties props;
 
     @Override
@@ -64,62 +65,27 @@ public class UpdateAtInterceptor implements Interceptor {
             return invocation.proceed();
         }
 
+        StatementType statementType = ms.getStatementType();
+        if (statementType != StatementType.PREPARED) {
+            return invocation.proceed();
+        }
+
         BoundSql boundSql = (BoundSql) metaObject.getValue("delegate.boundSql");
         List<ParameterMapping> parameterMappings = boundSql.getParameterMappings();
         Object parameterObject = boundSql.getParameterObject();
 
         //获取原始sql
-        String originalSql = (String) metaObject.getValue("delegate.boundSql.sql");
+        String originalSql = boundSql.getSql();
         logger.debug("==> originalSql: " + originalSql);
 
         //修改后的sql
-        String newSql = "";
+        String newSql;
 
         Date date = new Date();
         if (sqlCmdType == SqlCommandType.UPDATE) {
-
-            for (Object k : props.keySet()) {
-                String filedName = (String) k;
-                String columnName = props.getProperty(filedName);
-
-                StringBuilder sb = new StringBuilder();
-                String[] sqlList = originalSql.split(";");
-                for (int i = 0; i < sqlList.length; i++) {
-                    if (i > 0) {
-                        sb.append(";");
-                    }
-
-                    String sql = sqlList[i];
-                    Statement stmt = CCJSqlParserUtil.parse(sql);
-                    List<Column> columns = getColumns(stmt, sqlCmdType);
-
-                    if (!contains(columns, columnName)) {
-                        //不包含update_at 字段时，则修改SQL
-                        sql = addFiled4Update(stmt, columnName, date);
-                        sb.append(sql);
-                    } else {
-                        //包含update_at 字段时，则修改参数值
-                        modifyParam4Update(columns, parameterObject, parameterMappings, columnName, filedName, date);
-                    }
-                }
-                newSql = sb.toString();
-            }
+            newSql = build4Update(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
         } else {
-            Statement stmt = CCJSqlParserUtil.parse(originalSql);
-            List<Column> columns = getColumns(stmt, sqlCmdType);
-
-            for (Object k : props.keySet()) {
-                String filedName = (String) k;
-                String columnName = props.getProperty(filedName);
-
-                if (!contains(columns, columnName)) {
-                    //不包含update_at 字段时，则修改SQL
-                    newSql = addFiled4Insert(stmt, columnName, date);
-                } else {
-                    //包含update_at 字段时，则修改参数值
-                    modifyparsm4Insert(columns, parameterObject, parameterMappings, columnName, filedName, date);
-                }
-            }
+            newSql = build4Insert(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
         }
 
         //修改原始sql
@@ -129,6 +95,88 @@ public class UpdateAtInterceptor implements Interceptor {
         }
 
         return invocation.proceed();
+    }
+
+    /**
+     * update 操作
+     *
+     * @param sqlCmdType        sqlCmdType
+     * @param parameterMappings parameterMappings
+     * @param parameterObject   parameterObject
+     * @param originalSql       originalSql
+     * @param date              date
+     * @return sql
+     * @throws JSQLParserException e
+     */
+    private String build4Update(SqlCommandType sqlCmdType, List<ParameterMapping> parameterMappings, Object parameterObject, String originalSql, Date date) throws JSQLParserException {
+        StringBuilder sb = new StringBuilder();
+        for (Object k : props.keySet()) {
+            String filedName = (String) k;
+            String columnName = props.getProperty(filedName);
+
+            String[] sqlList = originalSql.split(";");
+            for (int i = 0; i < sqlList.length; i++) {
+                if (i > 0 && sb.length() > 0) {
+                    sb.append(";");
+                }
+
+                String sql = sqlList[i];
+                Update stmt = (Update) CCJSqlParserUtil.parse(sql);
+                List<Column> columns = getColumns(stmt, sqlCmdType);
+
+                if (!contains(columns, columnName)) {
+                    //不包含update_at 字段时，则修改SQL
+                    sql = addFiled4Update(stmt, columnName, date);
+                    sb.append(sql);
+                } else {
+                    //包含update_at 字段时，则修改参数值
+                    modifyParam4Update(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
+                    // sb.append(sql); 暂时不用
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * insert 操作
+     *
+     * @param sqlCmdType        sqlCmdType
+     * @param parameterMappings parameterMappings
+     * @param parameterObject   parameterObject
+     * @param originalSql       originalSql
+     * @param date              date
+     * @return sql
+     * @throws JSQLParserException e
+     */
+    private String build4Insert(SqlCommandType sqlCmdType, List<ParameterMapping> parameterMappings, Object parameterObject, String originalSql, Date date) throws JSQLParserException {
+        StringBuilder sb = new StringBuilder();
+        for (Object k : props.keySet()) {
+            String filedName = (String) k;
+            String columnName = props.getProperty(filedName);
+
+            String[] sqlList = originalSql.split(";");
+            for (int i = 0; i < sqlList.length; i++) {
+                if (i > 0 && sb.length() > 0) {
+                    sb.append(";");
+                }
+
+                String sql = sqlList[i];
+                Insert stmt = (Insert) CCJSqlParserUtil.parse(sql);
+                List<Column> columns = getColumns(stmt, sqlCmdType);
+
+                if (!contains(columns, columnName)) {
+                    //不包含update_at 字段时，则修改SQL
+                    sql = addFiled4Insert(stmt, columnName, date);
+                    sb.append(sql);
+                } else {
+                    //包含update_at 字段时，则修改参数值
+                    modifyParsm4Insert(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
+                    // sb.append(sql); 暂时不用
+                }
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -214,29 +262,35 @@ public class UpdateAtInterceptor implements Interceptor {
     /**
      * update 修改字段参数值
      *
-     * @param columns    update
-     * @param columnName c
-     * @param o          o
-     * @return s
+     * @param stmt              stmt
+     * @param parameterObject   parameterObject
+     * @param parameterMappings parameterMappings
+     * @param frchIdx           frchIdx
+     * @param columnName        columnName
+     * @param filedName         filedName
+     * @param o                 o
      */
-    private void modifyParam4Update(List<Column> columns, Object parameterObject, List<ParameterMapping> parameterMappings, String columnName, String filedName, Object o) {
+    private void modifyParam4Update(Update stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, String columnName, String filedName, Object o) {
+        List<Column> columns = stmt.getColumns();
         int idx = getColumnIndex(columns, columnName);
-        setFieldValue(parameterObject, idx, filedName, o);
-
+        int pIdx = getParamAt(stmt, idx);
+        setFieldValue(parameterObject, parameterMappings, frchIdx, idx, pIdx, filedName, o);
     }
 
     /**
      * insert 修改
      *
-     * @param columns         columns
+     * @param stmt            columns
      * @param parameterObject p
      * @param columnName      c
      * @param filedName       f
      * @param o               o
      */
-    private void modifyparsm4Insert(List<Column> columns, Object parameterObject, List<ParameterMapping> parameterMappings, String columnName, String filedName, Object o) {
+    private void modifyParsm4Insert(Insert stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, String columnName, String filedName, Object o) {
+        List<Column> columns = stmt.getColumns();
         int idx = getColumnIndex(columns, columnName);
-        setFieldValue(parameterObject, idx, filedName, o);
+        int pIdx = getParamAt(stmt, idx);
+        setFieldValue(parameterObject, parameterMappings, frchIdx, idx, pIdx, filedName, o);
     }
 
     /**
@@ -257,31 +311,63 @@ public class UpdateAtInterceptor implements Interceptor {
     }
 
     /**
+     * getParamAt
+     *
+     * @param stmt stmt
+     * @return i
+     */
+    private int getParamAt(Statement stmt, int idx) {
+        int pAt = -1;
+        if (stmt instanceof Update) {
+            Update update = (Update) stmt;
+            List<Expression> expressions = update.getExpressions();
+            Expression expression = expressions.get(idx);
+            JdbcParameter jdbcParameter = (JdbcParameter) expression;
+            pAt = jdbcParameter.getIndex();
+        } else if (stmt instanceof Insert) {
+            Insert insert = (Insert) stmt;
+            ExpressionList expressionList = (ExpressionList) insert.getItemsList();
+            List<Expression> expressions = expressionList.getExpressions();
+            Expression expression = expressions.get(idx);
+            JdbcParameter jdbcParameter = (JdbcParameter) expression;
+            pAt = jdbcParameter.getIndex();
+        }
+        return pAt;
+    }
+
+    /**
      * setFieldValue
      *
      * @param parameterObject 参数
      * @param index           index
      * @param fieldName       f
      */
-    private void setFieldValue(Object parameterObject, int index, String fieldName, Object v) {
-        String paramIdx = PARAM + index;
+    private void setFieldValue(Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, int index, int pIdx, String fieldName, Object v) {
+        ParameterMapping parameterMapping = parameterMappings.get(pIdx - 1);
+        String property = parameterMapping.getProperty();
+        logger.debug(pIdx + ":" + property);
+        String pKey = property;
+
+        if (pKey.startsWith(FRCH)) {
+            logger.warn("暂不支持 【" + pKey + "】" + frchIdx + " ==> " + index);
+            return;
+        }
+
+        if (pKey.contains(SP)) {
+            String[] split = pKey.split("\\.");
+            pKey = split[0];
+        }
+
         if (parameterObject instanceof DefaultSqlSession.StrictMap) {
-            DefaultSqlSession.StrictMap map = (DefaultSqlSession.StrictMap) parameterObject;
-            Object object = map.get("list");
-            if (object == null) {
-                object = map.get("array");
-            }
-            if (object != null) {
-                setValueFromListOrArray(object, index, fieldName, v);
-            }
+            logger.warn("暂不支持 DefaultSqlSession.StrictMap");
         } else if (parameterObject instanceof MapperMethod.ParamMap<?>) {
             MapperMethod.ParamMap map = (MapperMethod.ParamMap) parameterObject;
-            Object param1 = map.get(paramIdx);
+            Object param1 = map.get(pKey);
             if (param1.getClass().isArray() || List.class.isAssignableFrom(param1.getClass())) {
-                setValueFromListOrArray(param1, index, fieldName, v);
+                logger.warn("暂不支持 Array");
             } else {
                 if (TypeUtil.isSimpleType(param1.getClass())) {
-                    map.put(paramIdx, v);
+                    map.put(pKey, v);
                 } else {
                     MetaObject metaObject = SystemMetaObject.forObject(param1);
                     metaObject.setValue(fieldName, v);
@@ -289,32 +375,12 @@ public class UpdateAtInterceptor implements Interceptor {
             }
         } else if (parameterObject instanceof Map) {
             Map map = (Map) parameterObject;
-            map.put(paramIdx, v);
+            map.put(pKey, v);
         } else {
             MetaObject metaObject = SystemMetaObject.forObject(parameterObject);
             metaObject.setValue(fieldName, v);
         }
 
-    }
-
-    /**
-     * getValueFromListOrArray
-     *
-     * @param parameterObject o
-     * @param index           i
-     * @param fieldName       f
-     */
-    private void setValueFromListOrArray(Object parameterObject, int index, String fieldName, Object v) {
-        Object entity = null;
-        if (parameterObject instanceof List) {
-            entity = ((List) parameterObject).get(index);
-        } else if (parameterObject != null && parameterObject.getClass().isArray()) {
-            entity = ((Object[]) parameterObject)[index];
-        }
-        if (entity != null) {
-            MetaObject metaObject = SystemMetaObject.forObject(entity);
-            metaObject.setValue(fieldName, v);
-        }
     }
 
     /**
