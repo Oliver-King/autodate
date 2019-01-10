@@ -30,6 +30,8 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * @author cgj
@@ -78,20 +80,25 @@ public class UpdateAtInterceptor implements Interceptor {
         String originalSql = boundSql.getSql();
         logger.debug("==> originalSql: " + originalSql);
 
-        //修改后的sql
-        String newSql;
+        try {
+            //修改后的sql
+            String newSql;
 
-        Date date = new Date();
-        if (sqlCmdType == SqlCommandType.UPDATE) {
-            newSql = build4Update(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
-        } else {
-            newSql = build4Insert(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
-        }
+            Date date = new Date();
+            if (sqlCmdType == SqlCommandType.UPDATE) {
+                newSql = build4Update(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
+            } else {
+                newSql = build4Insert(sqlCmdType, parameterMappings, parameterObject, originalSql, date);
+            }
 
-        //修改原始sql
-        if (null != newSql && newSql.length() > 0) {
-            logger.debug("==> newSql: " + newSql);
-            metaObject.setValue("delegate.boundSql.sql", newSql);
+            //修改原始sql
+            if (null != newSql && newSql.length() > 0) {
+                logger.debug("==> newSql: " + newSql);
+                metaObject.setValue("delegate.boundSql.sql", newSql);
+            }
+
+        } catch (Exception e) {
+            logger.error("更新时间拦截异常：", e);
         }
 
         return invocation.proceed();
@@ -115,7 +122,8 @@ public class UpdateAtInterceptor implements Interceptor {
             String columnName = props.getProperty(filedName);
 
             String[] sqlList = originalSql.split(";");
-            for (int i = 0; i < sqlList.length; i++) {
+            int length = sqlList.length;
+            for (int i = 0; i < length; i++) {
                 if (i > 0 && sb.length() > 0) {
                     sb.append(";");
                 }
@@ -126,7 +134,7 @@ public class UpdateAtInterceptor implements Interceptor {
 
                 if (contains(columns, columnName)) {
                     //包含update_at 字段时，则修改参数值
-                    modifyParam4Update(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
+                    modifyParam4Update(stmt, parameterObject, parameterMappings, length, i, columnName, filedName, date);
                     // sb.append(sql); 暂时不用
                 } else {
                     //不包含update_at 字段时，则修改SQL
@@ -157,7 +165,8 @@ public class UpdateAtInterceptor implements Interceptor {
             String columnName = props.getProperty(filedName);
 
             String[] sqlList = originalSql.split(";");
-            for (int i = 0; i < sqlList.length; i++) {
+            int length = sqlList.length;
+            for (int i = 0; i < length; i++) {
                 if (i > 0 && sb.length() > 0) {
                     sb.append(";");
                 }
@@ -168,7 +177,7 @@ public class UpdateAtInterceptor implements Interceptor {
 
                 if (contains(columns, columnName)) {
                     //包含update_at 字段时，则修改参数值
-                    modifyParsm4Insert(stmt, parameterObject, parameterMappings, i, columnName, filedName, date);
+                    modifyParsm4Insert(stmt, parameterObject, parameterMappings, length, i, columnName, filedName, date);
                     // sb.append(sql); 暂时不用
                 } else {
                     //不包含update_at 字段时，则修改SQL
@@ -272,11 +281,11 @@ public class UpdateAtInterceptor implements Interceptor {
      * @param filedName         filedName
      * @param o                 o
      */
-    private void modifyParam4Update(Update stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, String columnName, String filedName, Object o) {
+    private void modifyParam4Update(Update stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int sqlCn, int frchIdx, String columnName, String filedName, Object o) {
         List<Column> columns = stmt.getColumns();
-        int idx = getColumnIndex(columns, columnName);
-        int pIdx = getParamAt(stmt, idx);
-        setFieldValue(parameterObject, parameterMappings, frchIdx, idx, pIdx, filedName, o);
+        int clmIdx = getColumnIndex(columns, columnName);
+        int pIdx = getParamAt(stmt, clmIdx);
+        setFieldValue(parameterObject, parameterMappings, sqlCn, frchIdx, columns.size(), clmIdx, pIdx, filedName, o);
     }
 
     /**
@@ -288,11 +297,11 @@ public class UpdateAtInterceptor implements Interceptor {
      * @param filedName       f
      * @param o               o
      */
-    private void modifyParsm4Insert(Insert stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, String columnName, String filedName, Object o) {
+    private void modifyParsm4Insert(Insert stmt, Object parameterObject, List<ParameterMapping> parameterMappings, int sqlCn, int frchIdx, String columnName, String filedName, Object o) {
         List<Column> columns = stmt.getColumns();
-        int idx = getColumnIndex(columns, columnName);
-        int pIdx = getParamAt(stmt, idx);
-        setFieldValue(parameterObject, parameterMappings, frchIdx, idx, pIdx, filedName, o);
+        int clmIdx = getColumnIndex(columns, columnName);
+        int pIdx = getParamAt(stmt, clmIdx);
+        setFieldValue(parameterObject, parameterMappings, sqlCn, frchIdx, columns.size(), clmIdx, pIdx, filedName, o);
     }
 
     /**
@@ -341,17 +350,18 @@ public class UpdateAtInterceptor implements Interceptor {
      * setFieldValue
      *
      * @param parameterObject 参数
-     * @param index           index
+     * @param clmIdx          clmIdx
      * @param fieldName       f
      */
-    private void setFieldValue(Object parameterObject, List<ParameterMapping> parameterMappings, int frchIdx, int index, int pIdx, String fieldName, Object v) {
-        ParameterMapping parameterMapping = parameterMappings.get(pIdx - 1);
+    private void setFieldValue(Object parameterObject, List<ParameterMapping> parameterMappings, int sqlCn, int frchIdx, int clmCn, int clmIdx, int pIdx, String fieldName, Object v) {
+        int pmIdx = (frchIdx * (parameterMappings.size()/sqlCn)) + (pIdx - 1);
+        ParameterMapping parameterMapping = parameterMappings.get(pmIdx);
         String property = parameterMapping.getProperty();
         logger.debug(pIdx + ":" + property);
         String pKey = property;
 
         if (pKey.startsWith(FRCH)) {
-            logger.warn("暂不支持 【" + pKey + "】" + frchIdx + " ==> " + index);
+            logger.warn("暂不支持 【" + pKey + "】" + frchIdx + " ==> " + clmIdx);
             return;
         }
 
@@ -364,16 +374,22 @@ public class UpdateAtInterceptor implements Interceptor {
             logger.warn("暂不支持 DefaultSqlSession.StrictMap");
         } else if (parameterObject instanceof MapperMethod.ParamMap<?>) {
             MapperMethod.ParamMap map = (MapperMethod.ParamMap) parameterObject;
+
+            Integer pAt = null;
+            if (isPKeyArray(pKey)) {
+                String[] split = pKey.split("\\[");
+                pKey = split[0];
+                split = split[1].split("]");
+                String s = split[0];
+                pAt = Integer.parseInt(s);
+            }
+
             Object param1 = map.get(pKey);
             if (param1.getClass().isArray() || List.class.isAssignableFrom(param1.getClass())) {
-                logger.warn("暂不支持 Array");
+                // logger.warn("暂不支持 Array"); 尝试支持
+                setValueFromListOrArray(param1, frchIdx, clmIdx, pIdx, pAt, fieldName, v);
             } else {
-                if (TypeUtil.isSimpleType(param1.getClass())) {
-                    map.put(pKey, v);
-                } else {
-                    MetaObject metaObject = SystemMetaObject.forObject(param1);
-                    metaObject.setValue(fieldName, v);
-                }
+                setVal(fieldName, v, pKey, map, param1);
             }
         } else if (parameterObject instanceof Map) {
             Map map = (Map) parameterObject;
@@ -382,7 +398,69 @@ public class UpdateAtInterceptor implements Interceptor {
             MetaObject metaObject = SystemMetaObject.forObject(parameterObject);
             metaObject.setValue(fieldName, v);
         }
+    }
 
+    /**
+     * 设置值
+     *
+     * @param fieldName fieldName
+     * @param v         v
+     * @param pKey      pk
+     * @param map       m
+     * @param param1    p
+     */
+    private void setVal(String fieldName, Object v, String pKey, MapperMethod.ParamMap map, Object param1) {
+        if (TypeUtil.isSimpleType(param1.getClass())) {
+            map.put(pKey, v);
+        } else {
+            MetaObject metaObject = SystemMetaObject.forObject(param1);
+            metaObject.setValue(fieldName, v);
+        }
+    }
+
+    /**
+     * getValueFromListOrArray
+     *
+     * @param param     o
+     * @param index     i
+     * @param fieldName f
+     */
+    private void setValueFromListOrArray(Object param, int frchIdx, int index, int pIdx, Integer pAt, String fieldName, Object v) {
+        Object entity;
+        if (param instanceof List) {
+            List list = (List) param;
+            entity = list.get(pAt);
+            if (entity != null) {
+                if (TypeUtil.isSimpleType(entity.getClass())) {
+                    list.set(pAt, v);
+                } else {
+                    MetaObject metaObject = SystemMetaObject.forObject(entity);
+                    metaObject.setValue(fieldName, v);
+                }
+            }
+        } else if (param != null && param.getClass().isArray()) {
+            Object[] objects = (Object[]) param;
+            entity = objects[pAt];
+            if (entity != null) {
+                if (TypeUtil.isSimpleType(entity.getClass())) {
+                    objects[pAt] = v;
+                } else {
+                    MetaObject metaObject = SystemMetaObject.forObject(entity);
+                    metaObject.setValue(fieldName, v);
+                }
+            }
+        }
+    }
+
+    /**
+     * 判断参数是否为数组型参数
+     *
+     * @param pKey pk
+     * @return b
+     */
+    private boolean isPKeyArray(String pKey) {
+        String pattern = "^\\w+\\[\\w+]$";
+        return Pattern.matches(pattern, pKey);
     }
 
     /**
