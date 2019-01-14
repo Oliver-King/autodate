@@ -41,6 +41,7 @@ import java.util.regex.Pattern;
 public class UpdateAtInterceptor implements Interceptor {
 
     private static final Log logger = LogFactory.getLog(UpdateAtInterceptor.class);
+    private static final String S = "`";
     private static final String M = "prepare";
     private static final String SP = ".";
     private static final String FRCH = "__frch";
@@ -312,9 +313,10 @@ public class UpdateAtInterceptor implements Interceptor {
      * @return i
      */
     private int getColumnIndex(List<Column> columns, String columnName) {
+        String addS = S + columnName + S;
         for (int i = 0; i < columns.size(); i++) {
             Column column = columns.get(i);
-            if (column.getColumnName().equalsIgnoreCase(columnName)) {
+            if (column.getColumnName().equalsIgnoreCase(columnName) || column.getColumnName().equalsIgnoreCase(addS)) {
                 return i;
             }
         }
@@ -354,7 +356,7 @@ public class UpdateAtInterceptor implements Interceptor {
      * @param fieldName       f
      */
     private void setFieldValue(Object parameterObject, List<ParameterMapping> parameterMappings, int sqlCn, int frchIdx, int clmCn, int clmIdx, int pIdx, String fieldName, Object v) {
-        int pmIdx = (frchIdx * (parameterMappings.size()/sqlCn)) + (pIdx - 1);
+        int pmIdx = (frchIdx * (parameterMappings.size() / sqlCn)) + (pIdx - 1);
         ParameterMapping parameterMapping = parameterMappings.get(pmIdx);
         String property = parameterMapping.getProperty();
         logger.debug(pIdx + ":" + property);
@@ -477,8 +479,10 @@ public class UpdateAtInterceptor implements Interceptor {
         if (columnName == null || columnName.length() <= 0) {
             return false;
         }
+        String addS = S + columnName + S;
+
         for (Column column : columns) {
-            if (column.getColumnName().equalsIgnoreCase(columnName)) {
+            if (column.getColumnName().equalsIgnoreCase(columnName) || column.getColumnName().equalsIgnoreCase(addS)) {
                 return true;
             }
         }
